@@ -79,7 +79,11 @@ if st.button('Fetch & Analyze'):
     scenario = pd.DataFrame([{'Horizon': mapping[selected], 'Prob Bull': sel_probs['Prob Bull'], 'Prob Base': sel_probs['Prob Base'], 'Prob Bear': sel_probs['Prob Bear'], 'Bull target': bull_target, 'Bear target': bear_target }])
 
     st.subheader('Scenario probabilities & targets')
-    st.dataframe(scenario.style.format('{:.4f}'))
+    #st.dataframe(scenario.style.format('{:.4f}'))
+    # Apply numeric formatting only where appropriate
+    numeric_cols = scenario.select_dtypes(include='number').columns
+    st.dataframe(scenario.style.format(subset=numeric_cols, formatter="{:.4f}"))
+
 
     # Build interactive chart (last window)
     chart_window = max(60, days_opt*3)
