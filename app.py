@@ -26,7 +26,7 @@ n_sims = st.sidebar.slider('Monte Carlo sims', min_value=500, max_value=20000, v
 with st.sidebar.expander('Pick from top coins'):
     try:
         coins = fetch_coingecko_list()
-        names = [f\"{c['id']} ({c['symbol']})\" for c in coins]
+        names = [f\"{c['id']} ({c['symbol']})" for c in coins]
         choice = st.selectbox('Top coins', options=names, index=0)
         if st.button('Use selected coin'):
             token_text = choice.split(' ')[0]
