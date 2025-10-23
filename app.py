@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd, numpy as np, time, io
 import plotly.graph_objects as go
@@ -25,7 +26,7 @@ n_sims = st.sidebar.slider('Monte Carlo sims', min_value=500, max_value=20000, v
 with st.sidebar.expander('Pick from top coins'):
     try:
         coins = fetch_coingecko_list()
-        names = [f"{c['id']} ({c['symbol']})" for c in coins]
+        names = [f\"{c['id']} ({c['symbol']})\" for c in coins]
         choice = st.selectbox('Top coins', options=names, index=0)
         if st.button('Use selected coin'):
             token_text = choice.split(' ')[0]
@@ -51,6 +52,22 @@ if st.button('Fetch & Analyze'):
             st.error('Error fetching data: '+str(e))
             st.stop()
 
+    # Show cached/fresh info (best-effort; compatible across Streamlit versions)
+    try:
+        from streamlit.runtime.caching import cache_data_api
+        info = cache_data_api.get_cached_func_info(fetch_coingecko_daily)
+        if info and getattr(info, "stats", None) and getattr(info.stats, "hits", 0) > 0:
+            st.info(f\"📊 Using cached data for {token_text.upper()} ({days_opt} days). Cache refreshes hourly.\")
+        else:
+            st.success(f\"✅ Fresh data fetched for {token_text.upper()} ({days_opt} days).")
+    except Exception:
+        # Non-fatal: just continue without cache-info
+        pass
+
+    if df is None or df.empty:
+        st.error("No data returned. Try another token or increase the timeframe.")
+        st.stop()
+
     # prepare indicators
     df['MA20'] = sma(df['close'], 20)
     df['MA50'] = sma(df['close'], 50)
@@ -72,18 +89,26 @@ if st.button('Fetch & Analyze'):
     # Scenario table for selected horizon
     mapping = {1:'1D',7:'7D',30:'1M',90:'90D',365:'365D'}
     selected = days_opt
-    sel_probs = probs[selected]
+    sel_probs = probs.get(selected, {})
     bull_target = lt_ext.get('161.8%') if lt_ext else None
     bear_target = max(0.0, st_low - (st_high - st_low)*0.618)
 
-    scenario = pd.DataFrame([{'Horizon': mapping[selected], 'Prob Bull': sel_probs['Prob Bull'], 'Prob Base': sel_probs['Prob Base'], 'Prob Bear': sel_probs['Prob Bear'], 'Bull target': bull_target, 'Bear target': bear_target }])
+    scenario = pd.DataFrame([{
+        'Horizon': mapping.get(selected, str(selected)+'d'),
+        'Prob Bull': sel_probs.get('Prob Bull', None),
+        'Prob Base': sel_probs.get('Prob Base', None),
+        'Prob Bear': sel_probs.get('Prob Bear', None),
+        'Bull target': bull_target,
+        'Bear target': bear_target
+    }])
 
     st.subheader('Scenario probabilities & targets')
-    #st.dataframe(scenario.style.format('{:.4f}'))
-    # Apply numeric formatting only where appropriate
-    numeric_cols = scenario.select_dtypes(include='number').columns
-    st.dataframe(scenario.style.format(subset=numeric_cols, formatter="{:.4f}"))
-
+    # Format numeric columns only to avoid pandas Styler errors
+    try:
+        numeric_cols = scenario.select_dtypes(include='number').columns
+        st.dataframe(scenario.style.format(subset=numeric_cols, formatter="{:.4f}"))
+    except Exception:
+        st.dataframe(scenario)
 
     # Build interactive chart (last window)
     chart_window = max(60, days_opt*3)
@@ -112,7 +137,17 @@ if st.button('Fetch & Analyze'):
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader('Monte Carlo summary (all horizons)')
-    st.dataframe(pd.DataFrame.from_dict({str(k)+'d':v for k,v in probs.items()}, orient='index'))
+    # Build summary DataFrame safely and format numeric columns only
+    mc_summary = pd.DataFrame.from_dict({str(k)+'d':v for k,v in probs.items()}, orient='index')
+    # Attempt to cast numeric-like values to numbers where possible
+    for col in mc_summary.columns:
+        mc_summary[col] = pd.to_numeric(mc_summary[col], errors='ignore')
+
+    try:
+        num_cols = mc_summary.select_dtypes(include='number').columns
+        st.dataframe(mc_summary.style.format(subset=num_cols, formatter="{:.4f}"))
+    except Exception:
+        st.dataframe(mc_summary)
 
     # PDF export
     if st.button('Export PDF report'):
