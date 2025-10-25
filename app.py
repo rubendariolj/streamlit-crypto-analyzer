@@ -52,12 +52,35 @@ with st.sidebar.expander("Pick from top coins"):
 if st.button("Fetch & Analyze"):
     with st.spinner("Fetching or loading data..."):
         if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            df.columns = [c.lower() for c in df.columns]
-            if "timestamp" not in df.columns:
-                df.rename(columns={df.columns[0]: "timestamp"}, inplace=True)
-            if not np.issubdtype(df["timestamp"].dtype, np.datetime64):
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
+    # --- Improved CSV handling (handles semicolons, alternate names, flexible dates) ---
+    try:
+        df = pd.read_csv(uploaded_file, sep=None, engine="python")  # auto-detect delimiter
+    except Exception:
+        df = pd.read_csv(uploaded_file, sep=";")  # fallback for semicolon-separated files
+
+    # Normalize column names
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    # Rename time/date columns → timestamp
+    if "timestamp" not in df.columns:
+        for alt in ["time", "date", "datetime"]:
+            if alt in df.columns:
+                df.rename(columns={alt: "timestamp"}, inplace=True)
+                break
+        else:
+            st.error("❌ No 'timestamp' column found in uploaded CSV. Please include a time column.")
+            st.stop()
+
+    # Convert timestamp to datetime
+    try:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True)
+    except Exception:
+        st.warning("⚠️ Trying with dayfirst=True for timestamp parsing...")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True, dayfirst=True)
+
+    # Drop invalid timestamps
+    bad_rows = df["timestamp"]._
+
         else:
             fetch_days = max(days_opt, 90)
             try:
