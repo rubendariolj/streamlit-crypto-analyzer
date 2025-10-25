@@ -1,5 +1,6 @@
+
 import streamlit as st
-import pandas as pd, numpy as np, time, io
+import pandas as pd, numpy as np, time, io, csv
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
@@ -9,8 +10,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 import os
 
-st.set_page_config(layout='wide', page_title='Streamlit Crypto TA Analyzer — Interactive v1.5')
-st.title('Streamlit Crypto TA Analyzer — Interactive v1.5')
+st.set_page_config(layout='wide', page_title='Streamlit Crypto TA Analyzer — Interactive v1.7')
+st.title('Streamlit Crypto TA Analyzer — Interactive v1.7')
 
 # --- Sidebar settings ---
 st.sidebar.header('Data & Settings')
@@ -52,12 +53,54 @@ with st.sidebar.expander("Pick from top coins"):
 if st.button("Fetch & Analyze"):
     with st.spinner("Fetching or loading data..."):
         if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            df.columns = [c.lower() for c in df.columns]
+            # --- Improved CSV handling ---
+            try:
+                sample = uploaded_file.read(1024).decode("utf-8")
+                uploaded_file.seek(0)
+                dialect = csv.Sniffer().sniff(sample)
+                sep = dialect.delimiter
+            except Exception:
+                sep = ";"
+
+            try:
+                df = pd.read_csv(uploaded_file, sep=sep)
+            except Exception as e:
+                st.error(f"❌ Error reading CSV file: {e}")
+                st.stop()
+
+            df.columns = [c.strip().lower() for c in df.columns]
+
+            # Rename possible time/date columns → timestamp
             if "timestamp" not in df.columns:
-                df.rename(columns={df.columns[0]: "timestamp"}, inplace=True)
-            if not np.issubdtype(df["timestamp"].dtype, np.datetime64):
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                for alt in ["time", "date", "datetime"]:
+                    if alt in df.columns:
+                        df.rename(columns={alt: "timestamp"}, inplace=True)
+                        break
+                else:
+                    st.error(f"❌ No recognizable time column found. Columns detected: {list(df.columns)}")
+                    st.stop()
+
+            # Rename Volume variants → volume
+            if "volume" not in df.columns:
+                for alt in ["vol", "vol.", "volumen", "volumes"]:
+                    if alt in df.columns:
+                        df.rename(columns={alt: "volume"}, inplace=True)
+                        break
+
+            # Parse timestamps flexibly
+            try:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True)
+            except Exception:
+                st.warning("⚠️ Trying with dayfirst=True for timestamp parsing...")
+                df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", infer_datetime_format=True, dayfirst=True)
+
+            bad_rows = df["timestamp"].isna().sum()
+            if bad_rows > 0:
+                st.warning(f"🧹 Dropped {bad_rows} rows with invalid timestamp values.")
+                df = df.dropna(subset=["timestamp"])
+
+            uploaded_file.seek(0)
+
         else:
             fetch_days = max(days_opt, 90)
             try:
@@ -75,11 +118,31 @@ if st.button("Fetch & Analyze"):
         st.error("No data returned. Try another token or upload a CSV.")
         st.stop()
 
-    df["MA20"] = sma(df["close"], 20)
-    df["MA50"] = sma(df["close"], 50)
-    df["RSI14"] = compute_rsi(df["close"], 14)
+    # --- Detect timeframe automatically (1D, 4H, 1H, etc.) ---
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    if len(df) > 1:
+        avg_diff = (df["timestamp"].diff().dropna().median()).total_seconds()
+        if avg_diff < 3 * 3600:
+            timeframe = "1H"
+            horizon_label = "hours"
+        elif avg_diff < 8 * 3600:
+            timeframe = "4H"
+            horizon_label = "hours"
+        else:
+            timeframe = "1D"
+            horizon_label = "days"
+    else:
+        timeframe = "1D"
+        horizon_label = "days"
+
+    st.info(f"📅 Detected timeframe: **{timeframe}** data")
+
+    # --- Technical analysis ---
+    df["ma20"] = sma(df["close"], 20)
+    df["ma50"] = sma(df["close"], 50)
+    df["rsi14"] = compute_rsi(df["close"], 14)
     macd, sig, hist = compute_macd(df["close"])
-    df["MACD"], df["MACD_sig"], df["MACD_hist"] = macd, sig, hist
+    df["macd"], df["macd_sig"], df["macd_hist"] = macd, sig, hist
     support, resistance = simple_support_resistance(df, window=20)
 
     window_30 = df.tail(30) if len(df) >= 30 else df
@@ -96,11 +159,11 @@ if st.button("Fetch & Analyze"):
     bear_target = max(0.0, st_low - (st_high - st_low)*0.618)
     base_target = (st_high + st_low) / 2
 
-    st.subheader(f"💠 Token: {token_text.capitalize()} — {token_text.upper()}")
+    st.subheader(f"💠 Token: {token_text.capitalize()} — {token_text.upper()} ({timeframe} data)")
     st.markdown(f"💰 **Latest close:** ${df['close'].iloc[-1]:.4f} USD")
 
     scenario = pd.DataFrame([{
-        "Horizon": mapping.get(selected, str(selected) + "d"),
+        "Horizon": mapping.get(selected, str(selected) + horizon_label),
         "Prob Bull": sel_probs.get("Prob Bull", None),
         "Prob Base": sel_probs.get("Prob Base", None),
         "Prob Bear": sel_probs.get("Prob Bear", None),
@@ -117,14 +180,14 @@ if st.button("Fetch & Analyze"):
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
                         row_heights=[0.55, 0.2, 0.25],
                         specs=[[{'type':'xy'}],[{'type':'xy'}],[{'type':'xy'}]],
-                        subplot_titles=("Price with Fibonacci, MA20/50, Support & Resistance",
+                        subplot_titles=(f"Price ({timeframe}) with Fibonacci, MA20/50, Support & Resistance",
                                         "RSI (Relative Strength Index)",
                                         "MACD (Moving Average Convergence Divergence)"))
 
     fig.add_trace(go.Candlestick(x=df_chart["timestamp"], open=df_chart["open"], high=df_chart["high"],
                                  low=df_chart["low"], close=df_chart["close"], name="Candles"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MA20"], name="MA20"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MA50"], name="MA50"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["ma20"], name="MA20"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["ma50"], name="MA50"), row=1, col=1)
     fig.add_trace(go.Scatter(x=[df_chart["timestamp"].iloc[0], df_chart["timestamp"].iloc[-1]],
                              y=[support, support], mode="lines", name="Support"), row=1, col=1)
     fig.add_trace(go.Scatter(x=[df_chart["timestamp"].iloc[0], df_chart["timestamp"].iloc[-1]],
@@ -134,13 +197,13 @@ if st.button("Fetch & Analyze"):
     for k, v in lt_retr.items():
         fig.add_hline(y=v, line_dash="dash", annotation_text=f"LT {k} {v:.2f}", annotation_position="left", row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["RSI14"], name="RSI14"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["rsi14"], name="RSI14"), row=2, col=1)
     fig.add_hline(y=70, line_dash="dash", line_color="lightgray", row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="lightgray", row=2, col=1)
 
-    fig.add_trace(go.Bar(x=df_chart["timestamp"], y=df_chart["MACD_hist"], name="MACD hist"), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD"], name="MACD"), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD_sig"], name="Signal"), row=3, col=1)
+    fig.add_trace(go.Bar(x=df_chart["timestamp"], y=df_chart["macd_hist"], name="MACD hist"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["macd"], name="MACD"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["macd_sig"], name="Signal"), row=3, col=1)
 
     fig.update_layout(height=950, showlegend=True, legend_tracegroupgap=5)
     st.plotly_chart(fig, use_container_width=True)
@@ -157,6 +220,8 @@ if st.button("Fetch & Analyze"):
             Paragraph(f"Crypto TA Report - {token_text}", styles["Title"]),
             Spacer(1, 12),
             Paragraph(f"Latest close: ${df['close'].iloc[-1]:.4f} USD", styles["Normal"]),
+            Spacer(1, 12),
+            Paragraph(f"Detected timeframe: {timeframe}", styles["Normal"]),
             Spacer(1, 12),
         ]
         for k, v in st_retr.items():
