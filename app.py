@@ -172,7 +172,14 @@ if st.button("Fetch & Analyze"):
         "Bear target": bear_target,
     }])
     st.subheader("Scenario probabilities & targets (selected horizon)")
-    st.dataframe(scenario.style.format("{:.4f}"))
+    
+# Display scenario safely with numeric-only formatting
+try:
+    numeric_cols = scenario.select_dtypes(include=[np.number]).columns
+    st.dataframe(scenario.style.format(subset=numeric_cols, formatter="{:.4f}"))
+except Exception:
+    st.dataframe(scenario)
+
 
     chart_window = max(60, days_opt * 3)
     df_chart = df.tail(chart_window)
