@@ -47,7 +47,7 @@ with st.sidebar.expander('Pick from top coins'):
             st.session_state['token_text'] = chosen
             # update sidebar input value by setting session_state key
             st.session_state['token_text'] = chosen
-            st.experimental_rerun()
+            st.rerun()
     except Exception as e:
         st.write('Could not fetch coin list:', e)
 
