@@ -6,3 +6,4 @@ plotly
 reportlab
 matplotlib
 mplfinance
+kaleido
