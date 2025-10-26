@@ -9,7 +9,14 @@ from ta_analysis import sma, compute_rsi, compute_macd, fib_levels, simple_suppo
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.utils import ImageReader
+
+# --- Force Kaleido configuration for Streamlit Cloud ---
 import plotly.io as pio
+pio.kaleido.scope.default_format = "png"
+pio.kaleido.scope.default_width = 1000
+pio.kaleido.scope.default_height = 700
+pio.kaleido.scope.default_scale = 2
+
 
 st.set_page_config(layout='wide', page_title='Streamlit Crypto TA Analyzer — Robust v2.1')
 st.title('Streamlit Crypto TA Analyzer — Robust v2.1')
