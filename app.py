@@ -6,11 +6,13 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from fetch_data import fetch_coingecko_list, fetch_coingecko_daily, fetch_cmc_pro
 from ta_analysis import sma, compute_rsi, compute_macd, fib_levels, simple_support_resistance, compute_probs_from_df
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.utils import ImageReader
+import plotly.io as pio
 
-st.set_page_config(layout='wide', page_title='Streamlit Crypto TA Analyzer — Robust v2.0')
-st.title('Streamlit Crypto TA Analyzer — Robust v2.0')
+st.set_page_config(layout='wide', page_title='Streamlit Crypto TA Analyzer — Robust v2.1')
+st.title('Streamlit Crypto TA Analyzer — Robust v2.1')
 
 # -----------------------------
 # Helpers
@@ -22,14 +24,12 @@ def sniff_delimiter(uploaded_file):
         dialect = csv.Sniffer().sniff(sample)
         return dialect.delimiter
     except Exception:
-        # Heuristics: prefer semicolon if many present
         txt = sample if 'sample' in locals() else ''
         if txt.count(';') > txt.count(','):
             return ';'
         return ','
 
 def normalize_columns(df):
-    # lower, strip, remove extra spaces
     df.columns = [re.sub(r'\s+', ' ', c).strip().lower() for c in df.columns]
     return df
 
@@ -37,14 +37,12 @@ def map_columns(df):
     cols = list(df.columns)
     mapping = {}
 
-    # Time column candidates
     time_candidates = ['timestamp','time','date','datetime','open time','close time']
     for c in cols:
         if c in time_candidates or c.startswith('time'):
             mapping['timestamp'] = c
             break
 
-    # OHLC mapping (accept variations)
     def find_one(names, contains=None):
         for c in cols:
             if c in names:
@@ -59,7 +57,6 @@ def map_columns(df):
     mapping['high'] = find_one({'high','h'})
     mapping['low']  = find_one({'low','l'})
     mapping['close']= find_one({'close','c','final','last','close price'})
-    # volume: match "volume" or any column containing 'vol'
     vol = find_one({'volume'}, contains='vol')
     mapping['volume'] = vol
 
@@ -68,16 +65,13 @@ def map_columns(df):
 def coerce_numeric(df, cols):
     for c in cols:
         if c in df.columns:
-            # handle numbers with comma decimal (e.g., "123,45")
             if df[c].dtype == object:
                 df[c] = df[c].astype(str).str.replace(' ', '')
-                # if comma as decimal and no dots, replace comma with dot
                 df[c] = df[c].str.replace(',', '.', regex=False)
             df[c] = pd.to_numeric(df[c], errors='coerce')
     return df
 
 def synthesize_ohlc(df):
-    # If open/high/low missing, build from close
     if 'close' not in df.columns:
         return df
     if 'open' not in df.columns:
@@ -90,50 +84,49 @@ def synthesize_ohlc(df):
 
 def detect_timeframe(ts_series):
     if ts_series.dropna().size < 2:
-        return '1D', 'days', 24  # default
+        return '1D', 'days', 24
     diffs = ts_series.sort_values().diff().dropna().dt.total_seconds()
     med = float(diffs.median())
-    # thresholds
-    if med < 2*3600:          # <2h
+    if med < 2*3600:
         return '1H', 'hours', 1
-    if med < 6*3600:          # <6h
+    if med < 6*3600:
         return '4H', 'hours', 4
-    if med < 3*24*3600:       # <3d
+    if med < 3*24*3600:
         return '1D', 'days', 24
     return '1W', 'weeks', 24*7
 
 def horizon_steps_for_timeframe(tf):
     if tf == '1H':
-        # horizons in hours -> convert to steps directly
         return [24, 24*3, 24*7, 24*14, 24*30], ['24h','3d','7d','14d','30d']
     if tf == '4H':
-        # steps are 4h chunks
         return [6, 18, 42, 84, 180], ['1d','3d','1w','2w','1m']
     if tf == '1W':
         return [1, 4, 12, 26, 52], ['1w','4w','12w','26w','52w']
-    # default 1D
     return [1, 7, 30, 90, 365], ['1d','7d','30d','90d','365d']
 
-def robust_plot(df_chart, timeframe, support, resistance, st_retr, lt_retr):
+def build_figure(df_chart, timeframe, support, resistance, st_retr, lt_retr):
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
                         row_heights=[0.55, 0.2, 0.25],
                         specs=[[{'type':'xy'}],[{'type':'xy'}],[{'type':'xy'}]],
                         subplot_titles=(f"Price ({timeframe}) with Fibonacci, MA20/50, Support & Resistance",
                                         "RSI (Relative Strength Index)",
                                         "MACD (Moving Average Convergence Divergence)"))
+    # Candles
     fig.add_trace(go.Candlestick(x=df_chart["timestamp"], open=df_chart["open"], high=df_chart["high"],
                                  low=df_chart["low"], close=df_chart["close"], name="Candles"), row=1, col=1)
+    # MAs
     if 'MA20' in df_chart.columns and 'MA50' in df_chart.columns:
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MA20"], name="MA20"), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MA50"], name="MA50"), row=1, col=1)
 
-    if np.isfinite(support) and np.isfinite(resistance):
+    # S/R
+    if pd.notna(support) and pd.notna(resistance):
         fig.add_trace(go.Scatter(x=[df_chart["timestamp"].iloc[0], df_chart["timestamp"].iloc[-1]],
                                  y=[support, support], mode="lines", name="Support"), row=1, col=1)
         fig.add_trace(go.Scatter(x=[df_chart["timestamp"].iloc[0], df_chart["timestamp"].iloc[-1]],
                                  y=[resistance, resistance], mode="lines", name="Resistance"), row=1, col=1)
 
-    # Fibonacci lines (best-effort, ignore if subplot hline add fails)
+    # Fibs
     try:
         for k, v in st_retr.items():
             fig.add_hline(y=v, line_dash="dot", annotation_text=f"ST {k} {v:.2f}", annotation_position="right", row=1, col=1)
@@ -142,18 +135,98 @@ def robust_plot(df_chart, timeframe, support, resistance, st_retr, lt_retr):
     except Exception:
         pass
 
+    # RSI
     if 'RSI14' in df_chart.columns:
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["RSI14"], name="RSI14"), row=2, col=1)
         fig.add_hline(y=70, line_dash="dash", line_color="lightgray", row=2, col=1)
         fig.add_hline(y=30, line_dash="dash", line_color="lightgray", row=2, col=1)
 
+    # MACD
     if {'MACD_hist','MACD','MACD_sig'}.issubset(df_chart.columns):
         fig.add_trace(go.Bar(x=df_chart["timestamp"], y=df_chart["MACD_hist"], name="MACD hist"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD"], name="MACD"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD_sig"], name="Signal"), row=3, col=1)
 
-    fig.update_layout(height=950, showlegend=True, legend_tracegroupgap=5)
-    st.plotly_chart(fig, use_container_width=True)
+    # Legend at bottom
+    fig.update_layout(
+        height=950,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(255,255,255,0.7)"
+        )
+    )
+    return fig
+
+def build_pdf_bytes(token_text, timeframe, df, st_retr, lt_retr, scenario_df, fig=None):
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    def fmt_num(x, digits=4):
+        try:
+            if x is None or (isinstance(x, float) and np.isnan(x)):
+                return "N/A"
+            return f"{float(x):.{digits}f}"
+        except Exception:
+            return str(x)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf)
+    styles = getSampleStyleSheet()
+
+    story = [
+        Paragraph(f"Crypto TA Report — {token_text.capitalize()}", styles["Title"]),
+        Spacer(1, 12),
+        Paragraph(f"Detected timeframe: {timeframe}", styles["Normal"]),
+        Spacer(1, 12),
+    ]
+
+    # Latest close
+    if "close" in df.columns and not df["close"].empty:
+        story.append(Paragraph(f"Latest close: ${fmt_num(df['close'].iloc[-1])} USD", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+    # Embed chart image (medium size) if possible
+    if fig is not None:
+        try:
+            img_bytes = pio.to_image(fig, format="png", scale=2)
+            img_reader = ImageReader(io.BytesIO(img_bytes))
+            iw, ih = img_reader.getSize()
+            target_w = 420  # medium width (~half page)
+            target_h = ih * (target_w / iw)
+            story.append(Image(img_reader, width=target_w, height=target_h))
+            story.append(Spacer(1, 12))
+        except Exception as e:
+            # Kaleido likely missing; add a note
+            story.append(Paragraph("Chart image could not be embedded (kaleido not available).", styles["Italic"]))
+            story.append(Spacer(1, 12))
+
+    # Short-term Fibonacci
+    story.append(Paragraph("Short-term Fibonacci levels:", styles["Heading3"]))
+    for k, v in (st_retr or {}).items():
+        story.append(Paragraph(f"{k}: {fmt_num(v)}", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    # Long-term Fibonacci
+    story.append(Paragraph("Long-term Fibonacci levels:", styles["Heading3"]))
+    for k, v in (lt_retr or {}).items():
+        story.append(Paragraph(f"{k}: {fmt_num(v)}", styles["Normal"]))
+    story.append(Spacer(1, 12))
+
+    # Scenario (first row)
+    if scenario_df is not None and len(scenario_df) > 0:
+        story.append(Paragraph("Scenario probabilities (selected horizon):", styles["Heading3"]))
+        for k, v in scenario_df.iloc[0].items():
+            story.append(Paragraph(f"{k}: {fmt_num(v)}", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
 
 # -----------------------------
 # Sidebar
@@ -196,7 +269,6 @@ if st.button("Fetch & Analyze"):
             try:
                 df = pd.read_csv(uploaded_file, sep=sep)
             except Exception:
-                # retry with common seps
                 for s in [';', ',', '\t']:
                     try:
                         uploaded_file.seek(0)
@@ -211,11 +283,10 @@ if st.button("Fetch & Analyze"):
             df = normalize_columns(df)
             colmap = map_columns(df)
 
-            # Rename columns to standard names if found
+            # Rename to standard names
             for std, actual in colmap.items():
-                if actual and actual in df.columns:
-                    if std != actual:
-                        df.rename(columns={actual: std}, inplace=True)
+                if actual and actual in df.columns and std != actual:
+                    df.rename(columns={actual: std}, inplace=True)
 
             if 'timestamp' not in df.columns:
                 st.error(f"❌ No recognizable time column found. Columns detected: {list(df.columns)}")
@@ -254,7 +325,6 @@ if st.button("Fetch & Analyze"):
 
     # Sort & basic cleaning
     df = df.sort_values('timestamp').reset_index(drop=True)
-    # Ensure all required numeric columns exist
     for c in ['open','high','low','close']:
         if c not in df.columns:
             st.error(f"CSV missing required column: {c}.")
@@ -264,15 +334,16 @@ if st.button("Fetch & Analyze"):
     timeframe, horizon_label, unit_size = detect_timeframe(df['timestamp'])
     st.info(f"📅 Detected timeframe: **{timeframe}** data")
 
-    # Technical indicators (best-effort)
-    try:
+    # Technical indicators (compute only if missing)
+    if 'MA20' not in df.columns:
         df["MA20"] = sma(df["close"], 20)
+    if 'MA50' not in df.columns:
         df["MA50"] = sma(df["close"], 50)
+    if 'RSI14' not in df.columns:
         df["RSI14"] = compute_rsi(df["close"], 14)
+    if not {'MACD','MACD_sig','MACD_hist'}.issubset(df.columns):
         macd, sig, hist = compute_macd(df["close"])
         df["MACD"], df["MACD_sig"], df["MACD_hist"] = macd, sig, hist
-    except Exception as e:
-        st.warning(f"Some indicators could not be computed: {e}")
 
     # Support/Resistance
     try:
@@ -295,7 +366,7 @@ if st.button("Fetch & Analyze"):
         st.warning(f"Monte Carlo simulation failed: {e}")
         probs = {k: {} for k in steps}
 
-    # Scenario table for a representative horizon (use middle index to avoid empty)
+    # Choose representative horizon
     selected_idx = min(2, len(steps)-1)
     selected_steps = steps[selected_idx]
     selected_label = labels[selected_idx]
@@ -335,9 +406,26 @@ if st.button("Fetch & Analyze"):
 
     if df_chart.empty or df_chart["close"].isna().all():
         st.error("No valid OHLC data available for charting.")
+        fig = None
     else:
-        robust_plot(df_chart, timeframe, support if pd.notna(support) else np.nan,
-                    resistance if pd.notna(resistance) else np.nan, st_retr, lt_retr)
+        fig = build_figure(df_chart, timeframe, support if pd.notna(support) else np.nan,
+                           resistance if pd.notna(resistance) else np.nan, st_retr, lt_retr)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # --- Reliable PDF download (always rendered) ---
+    try:
+        pdf_bytes = build_pdf_bytes(token_text, timeframe, df, st_retr, lt_retr, scenario, fig=fig)
+        downloaded = st.download_button(
+            label="📄 Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"{token_text}_ta_report.pdf",
+            mime="application/pdf",
+            key="pdf_download_v21",
+        )
+        if downloaded:
+            st.success("PDF generated and download started ✅")
+    except Exception as e:
+        st.error(f"PDF generation failed: {e}")
 
     # Monte Carlo summary (all horizons)
     st.subheader("Monte Carlo summary (all horizons)")
@@ -347,33 +435,6 @@ if st.button("Fetch & Analyze"):
         st.dataframe(mc_summary.style.format(subset=num_cols, formatter="{:.4f}"))
     except Exception:
         st.dataframe(pd.DataFrame(probs))
-
-    # PDF Export
-    if st.button("Export PDF report"):
-        pdf_buffer = io.BytesIO()
-        doc = SimpleDocTemplate(pdf_buffer)
-        styles = getSampleStyleSheet()
-        story = [
-            Paragraph(f"Crypto TA Report - {token_text}", styles["Title"]),
-            Spacer(1, 12),
-            Paragraph(f"Detected timeframe: {timeframe}", styles["Normal"])
-        ]
-        try:
-            story += [
-                Spacer(1, 12),
-                Paragraph(f"Latest close: ${df['close'].iloc[-1]:.4f} USD", styles["Normal"]),
-                Spacer(1, 12),
-            ]
-        except Exception:
-            pass
-        for k, v in st_retr.items():
-            story.append(Paragraph(f"ST {k}: {v:.4f}", styles["Normal"]))
-        story.append(Spacer(1, 12))
-        for k, v in lt_retr.items():
-            story.append(Paragraph(f"LT {k}: {v:.4f}", styles["Normal"]))
-        doc.build(story)
-        st.download_button("Download PDF", data=pdf_buffer.getvalue(),
-                           file_name=f"{token_text}_ta_report.pdf", mime="application/pdf")
 
     # Diagnostics
     with st.expander("Diagnostics"):
