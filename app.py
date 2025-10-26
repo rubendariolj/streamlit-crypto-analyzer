@@ -366,27 +366,46 @@ if st.button("Fetch & Analyze"):
         pdf_buffer = io.BytesIO()
         doc = SimpleDocTemplate(pdf_buffer)
         styles = getSampleStyleSheet()
+        
         story = [
-            Paragraph(f"Crypto TA Report - {token_text}", styles["Title"]),
+            Paragraph(f"Crypto TA Report - {token_text.capitalize()}", styles["Title"]),
             Spacer(1, 12),
-            Paragraph(f"Detected timeframe: {timeframe}", styles["Normal"])
+            Paragraph(f"Detected timeframe: {timeframe}", styles["Normal"]),
+            Spacer(1, 12),
         ]
-        try:
-            story += [
-                Spacer(1, 12),
-                Paragraph(f"Latest close: ${df['close'].iloc[-1]:.4f} USD", styles["Normal"]),
-                Spacer(1, 12),
-            ]
-        except Exception:
-            pass
+
+        # Add summary stats safely
+        if "close" in df.columns and not df["close"].empty:
+            story.append(Paragraph(f"Latest close: ${float(df['close'].iloc[-1]):.4f} USD", styles["Normal"]))
+            story.append(Spacer(1, 12))
+
+        # Add Fibonacci levels
+        story.append(Paragraph("<b>Short-term Fibonacci levels:</b>", styles["Heading3"]))
         for k, v in st_retr.items():
-            story.append(Paragraph(f"ST {k}: {v:.4f}", styles["Normal"]))
+            story.append(Paragraph(f"{k}: {v:.4f}", styles["Normal"]))
         story.append(Spacer(1, 12))
+
+        story.append(Paragraph("<b>Long-term Fibonacci levels:</b>", styles["Heading3"]))
         for k, v in lt_retr.items():
-            story.append(Paragraph(f"LT {k}: {v:.4f}", styles["Normal"]))
+            story.append(Paragraph(f"{k}: {v:.4f}", styles["Normal"]))
+        story.append(Spacer(1, 12))
+
+        # Add probabilities if available
+        if len(scenario.columns) > 0:
+            story.append(Paragraph("<b>Scenario Probabilities:</b>", styles["Heading3"]))
+            for k, v in scenario.iloc[0].items():
+                story.append(Paragraph(f"{k}: {v}", styles["Normal"]))
+
         doc.build(story)
-        st.download_button("Download PDF", data=pdf_buffer.getvalue(),
-                           file_name=f"{token_text}_ta_report.pdf", mime="application/pdf")
+        pdf_value = pdf_buffer.getvalue()
+        pdf_buffer.close()
+
+        st.download_button(
+            label="📄 Download PDF Report",
+            data=pdf_value,
+            file_name=f"{token_text}_ta_report.pdf",
+            mime="application/pdf",
+        )
 
     # Diagnostics
     with st.expander("Diagnostics"):
