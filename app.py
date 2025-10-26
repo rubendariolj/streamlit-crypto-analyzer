@@ -481,9 +481,61 @@ if st.button("Fetch & Analyze"):
     except Exception:
         st.dataframe(pd.DataFrame(probs))
 
+    # ---------------------------------------------------------
+    # 📘 Interpretation Guide Section
+    # ---------------------------------------------------------
+    with st.expander("📘 How to Read and Interpret the Charts", expanded=False):
+        st.markdown("""
+        ### 🕯️ 1. Candlestick Chart, Moving Averages & Fibonacci
+        The main chart displays candlesticks showing open, high, low, and close prices for each 4-hour period.  
+        Blue (MA20) and red (MA50) lines represent short-term and mid-term moving averages, helping identify the trend.  
+        Dashed black lines indicate Fibonacci retracement and extension levels (support/resistance).  
+        Thicker dashed lines mark automatically detected support and resistance levels.
+        
+        ### 💹 2. RSI (Relative Strength Index)
+        - Measures momentum strength on a 0–100 scale.  
+        - Above 70 → Overbought (possible pullback).  
+        - Below 30 → Oversold (possible rebound).  
+        - Crossing 50 → Often signals a trend change.
+        
+        ### 📉 3. MACD (Moving Average Convergence Divergence)
+        - MACD line (orange) crossing above Signal (purple) → **Bullish momentum**  
+        - MACD below Signal → **Bearish momentum**  
+        - Histogram widening → Stronger momentum.
+        
+        ### 🎲 4. Monte Carlo Simulation Results
+        Forecasts thousands of possible future price paths based on volatility and drift.  
+        - **Prob Bull** → Probability of bullish outcome  
+        - **Prob Base** → Neutral probability  
+        - **Prob Bear** → Probability of bearish outcome  
+        A higher Prob Bull suggests upward bias, while Prob Bear indicates risk of decline.
+        
+        ### 📈 5. Key Indicator Signals
+        | Indicator | Bullish Signal | Bearish Signal |
+        |------------|----------------|----------------|
+        | MA20 / MA50 | MA20 crosses above MA50 | MA20 crosses below MA50 |
+        | RSI | RSI > 50 and rising | RSI < 50 and falling |
+        | MACD | MACD > Signal (bullish crossover) | MACD < Signal (bearish crossover) |
+        | Fibonacci | Bounce from 0.618 / Break above 1.0 | Rejection at 0.618 / Drop below 1.0 |
+        | Monte Carlo | Prob Bull > Prob Bear | Prob Bear > Prob Bull |
+        
+        ### ⚙️ 6. How to Read the Dashboard
+        1. Identify trend with MA20/MA50 and candles.  
+        2. Confirm with RSI (>50 bullish / <50 bearish).  
+        3. Check MACD alignment.  
+        4. Watch Fibonacci & S/R zones.  
+        5. Review Monte Carlo probabilities.  
+        6. Combine insights for a coherent trade plan.
+        
+        ---
+        <i>Prepared by Ruben D. / TokenConsult © 2025</i>
+        """, unsafe_allow_html=True)
+
     # Diagnostics
     with st.expander("Diagnostics"):
         st.write("Detected columns:", list(df.columns))
         st.write("Dtypes:", df.dtypes.astype(str).to_dict())
         st.write("First 5 rows:")
         st.dataframe(df.head())
+
+
