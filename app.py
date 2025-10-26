@@ -152,7 +152,20 @@ def robust_plot(df_chart, timeframe, support, resistance, st_retr, lt_retr):
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD"], name="MACD"), row=3, col=1)
         fig.add_trace(go.Scatter(x=df_chart["timestamp"], y=df_chart["MACD_sig"], name="Signal"), row=3, col=1)
 
-    fig.update_layout(height=950, showlegend=True, legend_tracegroupgap=5)
+    #fig.update_layout(height=950, showlegend=True, legend_tracegroupgap=5)
+    fig.update_layout(
+        height=950,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            xanchor="center",
+            x=0.5,
+            bgcolor="rgba(255,255,255,0.7)"
+        )
+    )
+
     st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------
